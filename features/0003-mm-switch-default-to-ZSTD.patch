@@ -1,0 +1,26 @@
+From 0cbb10ba67d610bbf0fe1e67799ad573fbd5eb4c Mon Sep 17 00:00:00 2001
+From: WeiguangTWK <weiguangtwk@outlook.com>
+Date: Sun, 22 Feb 2026 19:19:02 +0800
+Subject: [PATCH 2/2] mm: switch default to ZSTD
+
+---
+ drivers/block/zram/zram_drv.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/block/zram/zram_drv.c b/drivers/block/zram/zram_drv.c
+index 0d59ca540..eb9b6933e 100644
+--- a/drivers/block/zram/zram_drv.c
++++ b/drivers/block/zram/zram_drv.c
+@@ -42,7 +42,8 @@ static DEFINE_IDR(zram_index_idr);
+ static DEFINE_MUTEX(zram_index_mutex);
+ 
+ static int zram_major;
+-static const char *default_compressor = IS_ENABLED(CONFIG_CRYPTO_LZ4) ? "lz4" : "lzo-rle";
++static const char *default_compressor = IS_ENABLED(CONFIG_CRYPTO_ZSTD) ? "zstd" :
++				(IS_ENABLED(CONFIG_CRYPTO_LZ4) ? "lz4" : "lzo-rle");
+ 
+ /* Module params (documentation at end) */
+ static unsigned int num_devices = 1;
+-- 
+2.43.0
+
