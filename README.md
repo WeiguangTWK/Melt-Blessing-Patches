@@ -14,6 +14,6 @@ It depends, but the so called "advantages" compared to Melt are acutally quite s
 
 [asto18089](https://github.com/asto18089): One of Pandora Kernel Devs, TREMENDOUSLY SKILLED developer. He informed me many points that can be only noticed by experienced Linux dev
 
-[nakixii](https://github.com/nakixii): One of Pandora Kernel Devs, he gives many critical view and guide on some tech problem
+[nakixii](https://github.com/nakixii): One of Pandora Kernel Devs, he gives many critical views and guides on some tech problems
 
-HAMJTY: One of Pandora Kernel Devs, he also gives many critical view and guide on some tech problem
+HAMJTY: One of Pandora Kernel Devs, he also gives many views and guides on some tech problems
