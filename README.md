@@ -11,6 +11,9 @@ It depends, but the so called "advantages" compared to Melt are acutally quite s
 
 # CREDITS
 [Pzqqt](https://github.com/Pzqqt/android_kernel_xiaomi_marble): The dev of Melt, the best teacher for GKI beginners, whitout him, Melt-Blessing won't even exist
+
 [asto18089](https://github.com/asto18089): One of Pandora Kernel Devs, TREMENDOUSLY SKILLED developer. He informed me many points that can be only noticed by experienced Linux dev
+
 [nakixii](https://github.com/nakixii): One of Pandora Kernel Devs, he gives many critical view and guide on some tech problem
+
 HAMJTY: One of Pandora Kernel Devs, he also gives many critical view and guide on some tech problem
