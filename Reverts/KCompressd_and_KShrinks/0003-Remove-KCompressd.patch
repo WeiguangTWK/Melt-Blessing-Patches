@@ -1,0 +1,234 @@
+From 1a6de6ce3e0576bb54c9eddd34b635336ef6411d Mon Sep 17 00:00:00 2001
+From: WeiguangTWK <weiguangtwk@outlook.com>
+Date: Fri, 31 Oct 2025 08:00:11 +0800
+Subject: [PATCH 4/5] Remove KCompressd
+Why add more wheels instead of just adjust the WATERMARK and make kswapd work harder?
+
+---
+ include/linux/mmzone.h |  8 -----
+ include/linux/swap.h   |  7 ----
+ mm/page_alloc.c        |  1 -
+ mm/page_io.c           | 75 ------------------------------------------
+ mm/vmscan.c            | 31 ++---------------
+ 5 files changed, 2 insertions(+), 120 deletions(-)
+
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index 9c1272060325..f3a8d224989d 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -20,9 +20,6 @@
+ #include <linux/atomic.h>
+ #include <linux/mm_types.h>
+ #include <linux/page-flags.h>
+-#ifndef __GENKSYMS__
+-#include <linux/kfifo.h>
+-#endif
+ #include <linux/android_kabi.h>
+ #include <asm/page.h>
+ 
+@@ -781,11 +778,6 @@ typedef struct pglist_data {
+ 
+ 	int kswapd_failures;		/* Number of 'reclaimed == 0' runs */
+ 
+-#define KCOMPRESS_FIFO_SIZE 256
+-	wait_queue_head_t kcompressd_wait;
+-	struct task_struct *kcompressd;
+-	struct kfifo kcompress_fifo;
+-
+ 	ANDROID_OEM_DATA(1);
+ #ifdef CONFIG_COMPACTION
+ 	int kcompactd_max_order;
+diff --git a/include/linux/swap.h b/include/linux/swap.h
+index 695eea439aaf..beda0a50d0b9 100644
+--- a/include/linux/swap.h
++++ b/include/linux/swap.h
+@@ -413,8 +413,6 @@ int add_swap_extent(struct swap_info_struct *sis, unsigned long start_page,
+ int generic_swapfile_activate(struct swap_info_struct *, struct file *,
+ 		sector_t *);
+ 
+-int kcompressd(void *p);
+-
+ /* linux/mm/swap_state.c */
+ /* One swap address space for each 64M swap space */
+ #define SWAP_ADDRESS_SPACE_SHIFT	14
+@@ -655,11 +653,6 @@ static inline swp_entry_t get_swap_page(struct page *page)
+ 	return entry;
+ }
+ 
+-static inline int kcompressd(void *p)
+-{
+-	return 0;
+-}
+-
+ #endif /* CONFIG_SWAP */
+ 
+ #ifdef CONFIG_THP_SWAP
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 6ea7f3107bdc..4f64bd6651b9 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -7210,7 +7210,6 @@ static void __meminit pgdat_init_internals(struct pglist_data *pgdat)
+ 	pgdat_init_kcompactd(pgdat);
+ 
+ 	init_waitqueue_head(&pgdat->kswapd_wait);
+-	init_waitqueue_head(&pgdat->kcompressd_wait);
+ 	init_waitqueue_head(&pgdat->pfmemalloc_wait);
+ 
+ 	pgdat_page_ext_init(pgdat);
+diff --git a/mm/page_io.c b/mm/page_io.c
+index ca0dc49549df..b3a0eab220bf 100644
+--- a/mm/page_io.c
++++ b/mm/page_io.c
+@@ -192,32 +192,6 @@ int generic_swapfile_activate(struct swap_info_struct *sis,
+ 	goto out;
+ }
+ 
+-static bool swap_sched_async_compress(struct page *page)
+-{
+-	struct swap_info_struct *sis;
+-	pg_data_t *pgdat = NODE_DATA(numa_node_id());
+-
+-	if (unlikely(!pgdat->kcompressd))
+-		return false;
+-
+-	if (!current_is_kswapd())
+-		return false;
+-
+-	if (!PageAnon(page))
+-		return false;
+-
+-	sis = page_swap_info(page);
+-	if (data_race(sis->flags & SWP_SYNCHRONOUS_IO)) {
+-		if (kfifo_avail(&pgdat->kcompress_fifo) >= sizeof(page) &&
+-			kfifo_in(&pgdat->kcompress_fifo, &page, sizeof(page))) {
+-			wake_up_interruptible(&pgdat->kcompressd_wait);
+-			return true;
+-		}
+-	}
+-
+-	return false;
+-}
+-
+ /*
+  * We may have stale swap cache pages in memory: notice
+  * them here and get rid of the unnecessary final write.
+@@ -247,60 +221,11 @@ int swap_writepage(struct page *page, struct writeback_control *wbc)
+ 		goto out;
+ 	}
+ 
+-	/*
+-	 * Compression within zswap and zram might block rmap, unmap
+-	 * of both file and anon pages, try to do compression async
+-	 * if possible
+-	 */
+-	if (swap_sched_async_compress(page))
+-		return 0;
+-
+ 	ret = __swap_writepage(page, wbc, end_swap_bio_write);
+ out:
+ 	return ret;
+ }
+ 
+-int kcompressd(void *p)
+-{
+-	pg_data_t *pgdat = (pg_data_t *)p;
+-	struct page *page;
+-	struct writeback_control wbc = {
+-		.sync_mode = WB_SYNC_NONE,
+-		.nr_to_write = SWAP_CLUSTER_MAX,
+-		.range_start = 0,
+-		.range_end = LLONG_MAX,
+-		.for_reclaim = 1,
+-	};
+-
+-	/*
+-	 * Tell the memory management that we're a "memory allocator",
+-	 * and that if we need more memory we should get access to it
+-	 * regardless (see "__alloc_pages()"). "kswapd" should
+-	 * never get caught in the normal page freeing logic.
+-	 *
+-	 * (Kswapd normally doesn't need memory anyway, but sometimes
+-	 * you need a small amount of memory in order to be able to
+-	 * page out something else, and this flag essentially protects
+-	 * us from recursively trying to free more memory as we're
+-	 * trying to free the first piece of memory in the first place).
+-	 */
+-	current->flags |= PF_MEMALLOC | PF_KSWAPD;
+-
+-	while (!kthread_should_stop()) {
+-		wait_event_interruptible(pgdat->kcompressd_wait,
+-				!kfifo_is_empty(&pgdat->kcompress_fifo));
+-
+-		while (!kfifo_is_empty(&pgdat->kcompress_fifo)) {
+-			if (kfifo_out(&pgdat->kcompress_fifo, &page, sizeof(page))) {
+-				__swap_writepage(page, &wbc, end_swap_bio_write);
+-			}
+-		}
+-	}
+-	current->flags &= ~(PF_MEMALLOC | PF_KSWAPD);
+-
+-	return 0;
+-}
+-
+ static inline void count_swpout_vm_event(struct page *page)
+ {
+ #ifdef CONFIG_TRANSPARENT_HUGEPAGE
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 4c8adbcfab1f..68a453d8f214 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4215,25 +4215,6 @@ int kswapd_run(int nid)
+ 		pgdat->kswapd = NULL;
+ 	}
+ 
+-	ret = kfifo_alloc(&pgdat->kcompress_fifo,
+-			KCOMPRESS_FIFO_SIZE * sizeof(struct page *),
+-			GFP_KERNEL);
+-	if (ret) {
+-		pr_err("%s: fail to kfifo_alloc\n", __func__);
+-		return ret;
+-	}
+-
+-	pgdat->kcompressd = kthread_create_on_node(kcompressd, pgdat, nid,
+-			"kcompressd%d", nid);
+-	if (IS_ERR(pgdat->kcompressd)) {
+-		pr_err("Failed to start kcompressd on node %d，ret=%ld\n",
+-				nid, PTR_ERR(pgdat->kcompressd));
+-		pgdat->kcompressd = NULL;
+-		kfifo_free(&pgdat->kcompress_fifo);
+-	} else {
+-		wake_up_process(pgdat->kcompressd);
+-	}
+-
+ 	return ret;
+ }
+ 
+@@ -4243,9 +4224,7 @@ int kswapd_run(int nid)
+  */
+ void kswapd_stop(int nid)
+ {
+-	pg_data_t *pgdat = NODE_DATA(nid);
+-	struct task_struct *kswapd = pgdat->kswapd;
+-
++	struct task_struct *kswapd = NODE_DATA(nid)->kswapd;
+ 	if (kswapd_threads > 1) {
+ 		kswapd_per_node_stop(nid);
+ 		return;
+@@ -4253,13 +4232,7 @@ void kswapd_stop(int nid)
+ 
+ 	if (kswapd) {
+ 		kthread_stop(kswapd);
+-		pgdat->kswapd = NULL;
+-	}
+-
+-	if (pgdat->kcompressd) {
+-		kthread_stop(pgdat->kcompressd);
+-		pgdat->kcompressd = NULL;
+-		kfifo_free(&pgdat->kcompress_fifo);
++		NODE_DATA(nid)->kswapd = NULL;
+ 	}
+ }
+ 
+-- 
+2.43.0
+

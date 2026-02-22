@@ -1,0 +1,28 @@
+From f4dd3f299a2696a9e3fba7415a8dd035f6ab57e8 Mon Sep 17 00:00:00 2001
+From: WeiguangTWK <weiguangtwk@outlook.com>
+Date: Fri, 31 Oct 2025 07:53:58 +0800
+Subject: [PATCH 2/5] Remove kshrink_lruvecd and kshrink_slabd
+It's not always the case that split the task could improve performance, it depends on "Critial Path"
+
+---
+ arch/arm64/configs/marble_defconfig | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/configs/marble_defconfig b/arch/arm64/configs/marble_defconfig
+index cb28278937fa..fddae9edbcf2 100644
+--- a/arch/arm64/configs/marble_defconfig
++++ b/arch/arm64/configs/marble_defconfig
+@@ -1105,8 +1105,8 @@ CONFIG_BQ_FUEL_GAUGE=y
+ CONFIG_BQ_FG_UPDATE=y
+ CONFIG_MI_CHARGE_PROPERTY=y
+ CONFIG_BINDER_PRIO=m
+-CONFIG_KSHRINK_SLABD=m
+-CONFIG_KSHRINK_LRUVECD=m
++CONFIG_KSHRINK_SLABD=n
++CONFIG_KSHRINK_LRUVECD=n
+ CONFIG_MI_THERMAL_INTERFACE=m
+ CONFIG_MI_THERMAL_MULTI_CHARGE=y
+ CONFIG_HAVE_CHARGE_TEMP=y
+-- 
+2.43.0
+

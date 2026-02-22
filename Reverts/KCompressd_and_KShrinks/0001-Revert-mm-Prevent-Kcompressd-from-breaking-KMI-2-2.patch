@@ -1,0 +1,189 @@
+From 91fe87291d1c9bba660a4f6d46c49522b8a3fbef Mon Sep 17 00:00:00 2001
+From: WeiguangTWK <weiguangtwk@outlook.com>
+Date: Thu, 30 Oct 2025 13:26:01 +0800
+Subject: [PATCH 1/5] Revert "mm: Prevent Kcompressd from breaking KMI [2/2]"
+
+This reverts commit 794b3d6974279a036b4162a67a1f0362022b7f41.
+---
+ include/linux/mmzone.h | 12 +++++-------
+ mm/page_alloc.c        |  4 +---
+ mm/page_io.c           | 21 +++++++++------------
+ mm/vmscan.c            | 24 +++++++++++-------------
+ 4 files changed, 26 insertions(+), 35 deletions(-)
+
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index 50db4fe939b8..9c1272060325 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -781,6 +781,11 @@ typedef struct pglist_data {
+ 
+ 	int kswapd_failures;		/* Number of 'reclaimed == 0' runs */
+ 
++#define KCOMPRESS_FIFO_SIZE 256
++	wait_queue_head_t kcompressd_wait;
++	struct task_struct *kcompressd;
++	struct kfifo kcompress_fifo;
++
+ 	ANDROID_OEM_DATA(1);
+ #ifdef CONFIG_COMPACTION
+ 	int kcompactd_max_order;
+@@ -837,13 +842,6 @@ typedef struct pglist_data {
+ 	atomic_long_t		vm_stat[NR_VM_NODE_STAT_ITEMS];
+ } pg_data_t;
+ 
+-#define KCOMPRESS_FIFO_SIZE 256
+-struct kcompress_t {
+-	wait_queue_head_t kcompressd_wait;
+-	struct task_struct *kcompressd;
+-	struct kfifo kcompress_fifo;
+-};
+-
+ #define node_present_pages(nid)	(NODE_DATA(nid)->node_present_pages)
+ #define node_spanned_pages(nid)	(NODE_DATA(nid)->node_spanned_pages)
+ #ifdef CONFIG_FLAT_NODE_MEM_MAP
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 8996607c7a20..6ea7f3107bdc 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -84,8 +84,6 @@
+ /* Free Page Internal flags: for internal, non-pcp variants of free_pages(). */
+ typedef int __bitwise fpi_t;
+ 
+-extern struct kcompress_t kcompress_data[MAX_NUMNODES];
+-
+ /* No special request */
+ #define FPI_NONE		((__force fpi_t)0)
+ 
+@@ -7212,7 +7210,7 @@ static void __meminit pgdat_init_internals(struct pglist_data *pgdat)
+ 	pgdat_init_kcompactd(pgdat);
+ 
+ 	init_waitqueue_head(&pgdat->kswapd_wait);
+-	init_waitqueue_head(&kcompress_data[pgdat->node_id].kcompressd_wait);
++	init_waitqueue_head(&pgdat->kcompressd_wait);
+ 	init_waitqueue_head(&pgdat->pfmemalloc_wait);
+ 
+ 	pgdat_page_ext_init(pgdat);
+diff --git a/mm/page_io.c b/mm/page_io.c
+index 34e71d00b7ec..ca0dc49549df 100644
+--- a/mm/page_io.c
++++ b/mm/page_io.c
+@@ -27,8 +27,6 @@
+ #include <linux/sched/task.h>
+ #include <trace/hooks/mm.h>
+ 
+-extern struct kcompress_t kcompress_data[MAX_NUMNODES];
+-
+ static struct bio *get_swap_bio(gfp_t gfp_flags,
+ 				struct page *page, bio_end_io_t end_io)
+ {
+@@ -197,9 +195,9 @@ int generic_swapfile_activate(struct swap_info_struct *sis,
+ static bool swap_sched_async_compress(struct page *page)
+ {
+ 	struct swap_info_struct *sis;
+-	int node_id = numa_node_id();
++	pg_data_t *pgdat = NODE_DATA(numa_node_id());
+ 
+-	if (unlikely(!kcompress_data[node_id].kcompressd))
++	if (unlikely(!pgdat->kcompressd))
+ 		return false;
+ 
+ 	if (!current_is_kswapd())
+@@ -210,9 +208,9 @@ static bool swap_sched_async_compress(struct page *page)
+ 
+ 	sis = page_swap_info(page);
+ 	if (data_race(sis->flags & SWP_SYNCHRONOUS_IO)) {
+-		if (kfifo_avail(&kcompress_data[node_id].kcompress_fifo) >= sizeof(page) &&
+-			kfifo_in(&kcompress_data[node_id].kcompress_fifo, &page, sizeof(page))) {
+-			wake_up_interruptible(&kcompress_data[node_id].kcompressd_wait);
++		if (kfifo_avail(&pgdat->kcompress_fifo) >= sizeof(page) &&
++			kfifo_in(&pgdat->kcompress_fifo, &page, sizeof(page))) {
++			wake_up_interruptible(&pgdat->kcompressd_wait);
+ 			return true;
+ 		}
+ 	}
+@@ -265,7 +263,6 @@ int swap_writepage(struct page *page, struct writeback_control *wbc)
+ int kcompressd(void *p)
+ {
+ 	pg_data_t *pgdat = (pg_data_t *)p;
+-	int node_id = pgdat->node_id;
+ 	struct page *page;
+ 	struct writeback_control wbc = {
+ 		.sync_mode = WB_SYNC_NONE,
+@@ -290,11 +287,11 @@ int kcompressd(void *p)
+ 	current->flags |= PF_MEMALLOC | PF_KSWAPD;
+ 
+ 	while (!kthread_should_stop()) {
+-		wait_event_interruptible(kcompress_data[node_id].kcompressd_wait,
+-				!kfifo_is_empty(&kcompress_data[node_id].kcompress_fifo));
++		wait_event_interruptible(pgdat->kcompressd_wait,
++				!kfifo_is_empty(&pgdat->kcompress_fifo));
+ 
+-		while (!kfifo_is_empty(&kcompress_data[node_id].kcompress_fifo)) {
+-			if (kfifo_out(&kcompress_data[node_id].kcompress_fifo, &page, sizeof(page))) {
++		while (!kfifo_is_empty(&pgdat->kcompress_fifo)) {
++			if (kfifo_out(&pgdat->kcompress_fifo, &page, sizeof(page))) {
+ 				__swap_writepage(page, &wbc, end_swap_bio_write);
+ 			}
+ 		}
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index cd43483eb6c4..4c8adbcfab1f 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -181,8 +181,6 @@ struct scan_control {
+  */
+ int vm_swappiness = 60;
+ 
+-struct kcompress_t kcompress_data[MAX_NUMNODES];
+-
+ #define DEF_KSWAPD_THREADS_PER_NODE 1
+ static int kswapd_threads = DEF_KSWAPD_THREADS_PER_NODE;
+ static int __init kswapd_per_node_setup(char *str)
+@@ -4217,7 +4215,7 @@ int kswapd_run(int nid)
+ 		pgdat->kswapd = NULL;
+ 	}
+ 
+-	ret = kfifo_alloc(&kcompress_data[nid].kcompress_fifo,
++	ret = kfifo_alloc(&pgdat->kcompress_fifo,
+ 			KCOMPRESS_FIFO_SIZE * sizeof(struct page *),
+ 			GFP_KERNEL);
+ 	if (ret) {
+@@ -4225,15 +4223,15 @@ int kswapd_run(int nid)
+ 		return ret;
+ 	}
+ 
+-	kcompress_data[nid].kcompressd = kthread_create_on_node(kcompressd, pgdat, nid,
++	pgdat->kcompressd = kthread_create_on_node(kcompressd, pgdat, nid,
+ 			"kcompressd%d", nid);
+-	if (IS_ERR(kcompress_data[nid].kcompressd)) {
++	if (IS_ERR(pgdat->kcompressd)) {
+ 		pr_err("Failed to start kcompressd on node %d，ret=%ld\n",
+-				nid, PTR_ERR(kcompress_data[nid].kcompressd));
+-		kcompress_data[nid].kcompressd = NULL;
+-		kfifo_free(&kcompress_data[nid].kcompress_fifo);
++				nid, PTR_ERR(pgdat->kcompressd));
++		pgdat->kcompressd = NULL;
++		kfifo_free(&pgdat->kcompress_fifo);
+ 	} else {
+-		wake_up_process(kcompress_data[nid].kcompressd);
++		wake_up_process(pgdat->kcompressd);
+ 	}
+ 
+ 	return ret;
+@@ -4258,10 +4256,10 @@ void kswapd_stop(int nid)
+ 		pgdat->kswapd = NULL;
+ 	}
+ 
+-	if (kcompress_data[nid].kcompressd) {
+-		kthread_stop(kcompress_data[nid].kcompressd);
+-		kcompress_data[nid].kcompressd = NULL;
+-		kfifo_free(&kcompress_data[nid].kcompress_fifo);
++	if (pgdat->kcompressd) {
++		kthread_stop(pgdat->kcompressd);
++		pgdat->kcompressd = NULL;
++		kfifo_free(&pgdat->kcompress_fifo);
+ 	}
+ }
+ 
+-- 
+2.43.0
+

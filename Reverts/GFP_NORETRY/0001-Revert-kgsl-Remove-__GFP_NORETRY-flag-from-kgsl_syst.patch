@@ -1,0 +1,33 @@
+From 806a0ac2dc7ac4e0178537a37fd0dab311c565cf Mon Sep 17 00:00:00 2001
+From: WeiguangTWK <weiguangtwk@outlook.com>
+Date: Wed, 26 Nov 2025 13:00:25 +0800
+Subject: [PATCH] Revert-kgsl-Remove-__GFP_NORETRY-flag-from-kgsl_system_alloc
+Removing __GFP_NORETRY could trigger direct claim on alloc, causing freeze
+
+---
+ drivers/gpu/msm/kgsl_sharedmem.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/msm/kgsl_sharedmem.c b/drivers/gpu/msm/kgsl_sharedmem.c
+index aef22b32c..258d35439 100644
+--- a/drivers/gpu/msm/kgsl_sharedmem.c
++++ b/drivers/gpu/msm/kgsl_sharedmem.c
+@@ -1450,12 +1450,13 @@ static int kgsl_system_alloc_pages(u64 size, struct page ***pages,
+ 	struct page **local;
+ 	int i, npages = size >> PAGE_SHIFT;
+ 
+-	local = kvcalloc(npages, sizeof(*pages), GFP_KERNEL);
++	local = kvcalloc(npages, sizeof(*pages), GFP_KERNEL | __GFP_NORETRY);
+ 	if (!local)
+ 		return -ENOMEM;
+ 
+ 	for (i = 0; i < npages; i++) {
+-		gfp_t gfp = __GFP_ZERO | __GFP_HIGHMEM | GFP_KERNEL;
++		gfp_t gfp = __GFP_ZERO | __GFP_HIGHMEM |
++			GFP_KERNEL | __GFP_NORETRY;
+ 
+ 		if (!fatal_signal_pending(current))
+ 			local[i] = alloc_pages(gfp, get_order(PAGE_SIZE));
+-- 
+2.43.0
+
