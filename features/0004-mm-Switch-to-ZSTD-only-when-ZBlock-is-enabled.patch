@@ -1,0 +1,28 @@
+From fccb9007ff04699ab214de133e90aca2acfe9110 Mon Sep 17 00:00:00 2001
+From: WeiguangTWK <weiguangtwk@outlook.com>
+Date: Mon, 23 Feb 2026 12:20:16 +0800
+Subject: [PATCH] mm: Switch to ZSTD only when ZBlock is enabled
+
+---
+ drivers/block/zram/zram_drv.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/block/zram/zram_drv.c b/drivers/block/zram/zram_drv.c
+index eb9b6933e..a6d84446c 100644
+--- a/drivers/block/zram/zram_drv.c
++++ b/drivers/block/zram/zram_drv.c
+@@ -42,8 +42,9 @@ static DEFINE_IDR(zram_index_idr);
+ static DEFINE_MUTEX(zram_index_mutex);
+ 
+ static int zram_major;
+-static const char *default_compressor = IS_ENABLED(CONFIG_CRYPTO_ZSTD) ? "zstd" :
+-				(IS_ENABLED(CONFIG_CRYPTO_LZ4) ? "lz4" : "lzo-rle");
++static const char *default_compressor =
++	IS_ENABLED(CONFIG_ZRAM_USE_ZBLOCK) && IS_ENABLED(CONFIG_CRYPTO_ZSTD) ?
++	"zstd" : (IS_ENABLED(CONFIG_CRYPTO_LZ4) ? "lz4" : "lzo-rle");
+ 
+ /* Module params (documentation at end) */
+ static unsigned int num_devices = 1;
+-- 
+2.43.0
+
